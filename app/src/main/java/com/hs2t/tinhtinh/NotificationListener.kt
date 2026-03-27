@@ -1,6 +1,5 @@
 package com.hs2t.tinhtinh
 
-
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
@@ -12,31 +11,37 @@ import android.util.Log
 class NotificationListener : NotificationListenerService(){
     private var mediaPlayer: MediaPlayer? = null
 
-
     override fun onCreate() {
         super.onCreate()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        // Lọc thông báo từ MB Bank
-        if (sbn.packageName == "com.mbmobile") {
+        // 1. Lọc thông báo từ MyVIB (com.vib.vibmplus hoặc com.vib.myvib2)
+        val targetPackages = listOf("com.vib.vibmplus", "com.vib.myvib2", "com.mbmobile")
+        
+        if (targetPackages.contains(sbn.packageName)) {
             val extras = sbn.notification.extras
             val title = extras.getString("android.title")
             val text = extras.getString("android.text")
 
-//            if (title != null && text != null && text.contains("nhận được tiền", ignoreCase = true)) {
-//                speakOut(text)
-//            }
+            // Kiểm tra tiêu đề hoặc nội dung thông báo VIB (Thường chứa biến động số dư)
+            if(text != null){
+                Log.d("TINHTINH", "Nhận thông báo: $text")
 
-            if(title != null && title.equals("Thông báo biến động số dư") && text != null){
-                Log.d("TINHTINH", title);
-                val regex = Regex("""\+([\d,]+)VND\s([\d\/\:\s]+).+\|ND:\s([\w\s]+)""")
+                // 2. Regex mới cho VIB: Bắt số tiền sau dấu + và nội dung sau chữ ND:
+                // Cấu trúc VIB: GD +100,000VND ... ND: Noi dung chuyen tien
+                val regex = Regex("""\+([\d,.]+)VND.*ND:\s*(.*)""", RegexOption.IGNORE_CASE)
                 val matchResult = regex.find(text)
 
                 if (matchResult != null) {
-                    val amount = matchResult.groupValues[1]
-                    val datetime = matchResult.groupValues[2]
-                    val memo = matchResult.groupValues[3]
+                    // 3. Làm sạch số tiền (Xóa dấu phẩy/chấm) để Home Assistant hiểu là con số
+                    val rawAmount = matchResult.groupValues[1]
+                    val amount = rawAmount.replace(",", "").replace(".", "")
+                    
+                    val datetime = "" // VIB thường không để datetime cố định như MB, để trống hoặc lấy giờ hệ thống
+                    val memo = matchResult.groupValues[2].trim()
+
+                    Log.d("TINHTINH", "Sửa thành công: Số tiền $amount - Nội dung: $memo")
 
                     // Gửi thông báo qua Broadcast
                     val intent = Intent("com.hs2t.tinhtinh.NOTIFICATION_POSTED")
@@ -44,10 +49,10 @@ class NotificationListener : NotificationListenerService(){
                     intent.putExtra("datetime", datetime)
                     intent.putExtra("memo", memo)
                     sendBroadcast(intent)
+                    
                     playRingtone()
                 } else {
-                    Log.e("TINHTINH", "Không tìm thấy kết quả khớp.")
-                    Log.e("TINHTINH", text)
+                    Log.e("TINHTINH", "Không tìm thấy cấu trúc tiền VIB trong: $text")
                 }
             }
         }
@@ -55,7 +60,6 @@ class NotificationListener : NotificationListenerService(){
 
     private fun playRingtone() {
         try {
-            // Tăng âm lượng lên mức cao nhất
             val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             audioManager.setStreamVolume(
                 AudioManager.STREAM_MUSIC,
@@ -63,14 +67,12 @@ class NotificationListener : NotificationListenerService(){
                 0
             )
 
-            // Phát file nhạc chuông MP3
             if (mediaPlayer == null) {
-                mediaPlayer = MediaPlayer.create(this, R.raw.bel) // Đặt tên file MP3 là `ringtone.mp3`
+                mediaPlayer = MediaPlayer.create(this, R.raw.bel)
                 mediaPlayer?.setOnCompletionListener {
-                    stopRingtone() // Dừng phát nhạc khi hoàn thành
+                    stopRingtone()
                 }
             }
-
             mediaPlayer?.start()
         } catch (e: Exception) {
             Log.e("MyNotificationListener", "Error playing ringtone: ${e.message}")
@@ -78,13 +80,15 @@ class NotificationListener : NotificationListenerService(){
     }
 
     private fun stopRingtone() {
-        mediaPlayer?.stop()
-        mediaPlayer?.release()
-        mediaPlayer = null
+        if (mediaPlayer != null) {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+            mediaPlayer = null
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        stopRingtone() // Giải phóng MediaPlayer khi Service bị hủy
+        stopRingtone()
     }
 }
